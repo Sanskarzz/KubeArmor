@@ -323,6 +323,7 @@ func (dm *KubeArmorDaemon) GetAlreadyDeployedDockerContainers() {
 			endPoint := tp.EndPoint{}
 
 			if dcontainer.State == "running" {
+				container.Status = "running"
 				dm.ContainersLock.Lock()
 				if _, ok := dm.Containers[container.ContainerID]; !ok {
 					dm.Containers[container.ContainerID] = container
@@ -527,6 +528,17 @@ func (dm *KubeArmorDaemon) UpdateDockerContainer(containerID, action string) {
 
 		if container.ContainerID == "" {
 			return
+		}
+		container.Status = "running"
+
+		// A Docker restart can send start after die without a stop event.
+		// Clear the waiting entry through the normal removal path so its old
+		// endpoint and enforcement state do not prevent the new start.
+		dm.ContainersLock.RLock()
+		previous, exists := dm.Containers[containerID]
+		dm.ContainersLock.RUnlock()
+		if exists && previous.Status == "waiting" {
+			dm.UpdateDockerContainer(containerID, "stop")
 		}
 
 		endPoint := tp.EndPoint{}
@@ -786,9 +798,10 @@ func (dm *KubeArmorDaemon) UpdateDockerContainer(containerID, action string) {
 			dm.ContainersLock.Unlock()
 			return
 		}
+		container.Status = "waiting"
+		dm.Containers[containerID] = container
 		dm.ContainersLock.Unlock()
 
-		container.Status = "waiting"
 		go dm.StateAgent.PushContainerEvent(container, state.EventUpdated)
 	}
 }

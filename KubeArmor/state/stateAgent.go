@@ -154,21 +154,7 @@ func (sa *StateAgent) GetState(msg *emptypb.Empty, srv pb.StateAgent_GetStateSer
 	}
 	sa.KubeArmorNamespacesLock.RUnlock()
 
-	for _, container := range sa.Containers {
-		containerBytes, err := json.Marshal(container)
-		if err != nil {
-			kg.Warnf("Error while trying to marshal container %.6s data: %s", container.ContainerID, err.Error())
-		}
-
-		containerEvent := &pb.StateEvent{
-			Kind:   KindContainer,
-			Type:   EventAdded,
-			Name:   container.ContainerName,
-			Object: containerBytes,
-		}
-
-		stateEventList = append(stateEventList, containerEvent)
-	}
+	stateEventList = append(stateEventList, sa.snapshotContainerEvents()...)
 
 	stateEvents := &pb.StateEvents{
 		StateEvents: stateEventList,
@@ -181,6 +167,33 @@ func (sa *StateAgent) GetState(msg *emptypb.Empty, srv pb.StateAgent_GetStateSer
 	}
 
 	return nil
+}
+
+func (sa *StateAgent) snapshotContainerEvents() []*pb.StateEvent {
+	containerEvents := make([]*pb.StateEvent, 0)
+	sa.ContainersLock.RLock()
+	defer sa.ContainersLock.RUnlock()
+	for _, container := range sa.Containers {
+		// A "die" event keeps the container in KubeArmor's map for a
+		// possible restart. It must not reappear as running in a snapshot.
+		if container.Status != "" && container.Status != "running" {
+			continue
+		}
+		containerBytes, err := json.Marshal(container)
+		if err != nil {
+			kg.Warnf("Error while trying to marshal container %.6s data: %s", container.ContainerID, err.Error())
+		}
+
+		containerEvent := &pb.StateEvent{
+			Kind:   KindContainer,
+			Type:   EventAdded,
+			Name:   container.ContainerName,
+			Object: containerBytes,
+		}
+
+		containerEvents = append(containerEvents, containerEvent)
+	}
+	return containerEvents
 }
 
 // DestroyStateAgent destroys the referenced state agent
